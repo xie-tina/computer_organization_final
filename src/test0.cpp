@@ -24,8 +24,13 @@ struct PipelineStage {
     bool active = false;
     string signals;
     int aluResult = 0; // Result of ALU operation
+    int memData = 0;   // Data read from memory (for lw)
 };
 PipelineStage IF, ID, EX, MEM, WB;
+
+// Hazard flags
+bool stall = false;
+bool forwarding = false;
 
 // Read instructions from a file
 vector<Instruction> readInstructions(const string& filename) {
@@ -59,6 +64,19 @@ int executeALU(const string& op, int operand1, int operand2) {
     return 0; // Default case
 }
 
+// Forwarding logic
+int getRegisterValue(int regNum, const PipelineStage& stage) {
+    if (forwarding) {
+        if (regNum == MEM.instr.rd && MEM.active && (MEM.instr.op == "add" || MEM.instr.op == "sub")) {
+            return MEM.aluResult;
+        }
+        if (regNum == WB.instr.rd && WB.active && (WB.instr.op == "add" || WB.instr.op == "sub")) {
+            return WB.aluResult;
+        }
+    }
+    return registers[regNum];
+}
+
 // Simulate the pipeline for one cycle
 void simulateCycle(vector<Instruction>& instructions, vector<string>& output, int& cycleCount) {
     cycleCount++;
@@ -68,7 +86,7 @@ void simulateCycle(vector<Instruction>& instructions, vector<string>& output, in
     // WB Stage
     if (WB.active) {
         if (WB.instr.op == "add" || WB.instr.op == "sub" || WB.instr.op == "lw") {
-            registers[WB.instr.rd] = WB.aluResult;
+            registers[WB.instr.rd] = WB.instr.op == "lw" ? WB.memData : WB.aluResult;
         }
         WB.active = false;
     }
@@ -77,7 +95,7 @@ void simulateCycle(vector<Instruction>& instructions, vector<string>& output, in
     // MEM Stage
     if (MEM.active) {
         if (MEM.instr.op == "lw") {
-            MEM.aluResult = memory[MEM.aluResult / 4]; // Load word
+            MEM.memData = memory[MEM.aluResult / 4]; // Load word
         } else if (MEM.instr.op == "sw") {
             memory[MEM.aluResult / 4] = registers[MEM.instr.rt]; // Store word
         }
@@ -88,8 +106,8 @@ void simulateCycle(vector<Instruction>& instructions, vector<string>& output, in
 
     // EX Stage
     if (EX.active) {
-        int operand1 = registers[EX.instr.rs];
-        int operand2 = (EX.instr.op == "lw" || EX.instr.op == "sw") ? EX.instr.imm : registers[EX.instr.rt];
+        int operand1 = getRegisterValue(EX.instr.rs, MEM);
+        int operand2 = (EX.instr.op == "lw" || EX.instr.op == "sw") ? EX.instr.imm : getRegisterValue(EX.instr.rt, MEM);
         EX.aluResult = executeALU(EX.instr.op, operand1, operand2);
         MEM = EX;
         EX.active = false;
@@ -98,13 +116,17 @@ void simulateCycle(vector<Instruction>& instructions, vector<string>& output, in
 
     // ID Stage
     if (ID.active) {
-        EX = ID;
-        ID.active = false;
+        if (stall) {
+            cycleOutput << "ID: Stall" << endl;
+        } else {
+            EX = ID;
+            ID.active = false;
+        }
     }
     cycleOutput << "ID: " << (ID.active ? ID.instr.op : "NOP") << endl;
 
     // IF Stage
-    if (!instructions.empty()) {
+    if (!instructions.empty() && !stall) {
         IF.instr = instructions.front();
         instructions.erase(instructions.begin());
         ID = IF;
@@ -112,7 +134,7 @@ void simulateCycle(vector<Instruction>& instructions, vector<string>& output, in
     }
     cycleOutput << "IF: " << (IF.active ? IF.instr.op : "NOP") << endl;
 
-    cycleOutput << "-----------------------------------\\n";
+    cycleOutput << "-----------------------------------\n";
     output.push_back(cycleOutput.str());
 }
 
@@ -138,16 +160,16 @@ int main() {
 
     // Append final states to output
     stringstream finalOutput;
-    finalOutput << "Simulation completed in " << cycleCount << " cycles.\\n";
-    finalOutput << "Final Register Values:\\n";
+    finalOutput << "Simulation completed in " << cycleCount << " cycles.\n";
+    finalOutput << "Final Register Values:\n";
     for (int i = 0; i < 32; i++) {
         finalOutput << "$" << i << ": " << registers[i] << " ";
-        if ((i + 1) % 8 == 0) finalOutput << "\\n";
+        if ((i + 1) % 8 == 0) finalOutput << "\n";
     }
-    finalOutput << "Final Memory Values:\\n";
+    finalOutput << "Final Memory Values:\n";
     for (int i = 0; i < 32; i++) {
         finalOutput << "M[" << i << "]: " << memory[i] << " ";
-        if ((i + 1) % 8 == 0) finalOutput << "\\n";
+        if ((i + 1) % 8 == 0) finalOutput << "\n";
     }
     output.push_back(finalOutput.str());
 
@@ -156,4 +178,3 @@ int main() {
     cout << "Simulation complete. Output written to " << outputFile << endl;
     return 0;
 }
-
