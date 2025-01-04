@@ -1,8 +1,7 @@
 #include <iostream>
 #include <fstream>
-#include <sstream>
-#include <vector>
 #include <string>
+#include <vector>
 #include <map>
 
 using namespace std;
@@ -10,8 +9,9 @@ using namespace std;
 // Define a struct for instructions
 struct Instruction {
     string op;       // Operation: add, sub, lw, sw, beq
-    int rd = 0, rs = 0, rt = 0;  // Registers for R-type
-    int imm = 0;     // Immediate value for I-type
+    int rd, rs, rt;  // Registers for R-type
+    int imm;         // Immediate value for I-type
+    int address;     // Address for memory instructions
 };
 
 // Define CPU components
@@ -24,36 +24,24 @@ struct PipelineStage {
     bool active = false;
     string signals;
     int aluResult = 0; // Result of ALU operation
-    int memData = 0;   // Data read from memory (for lw)
 };
 PipelineStage IF, ID, EX, MEM, WB;
 
-// Hazard flags
-bool stall = false;
-bool forwarding = false;
+// Forwarding logic placeholders
+bool forwardingEnabled = true;
+bool stallRequired = false;
 
-// Read instructions from a file
-vector<Instruction> readInstructions(const string& filename) {
-    ifstream infile(filename);
-    vector<Instruction> instructions;
-    string line;
-    while (getline(infile, line)) {
-        Instruction instr;
-        stringstream ss(line);
-        ss >> instr.op;
-        if (instr.op == "lw" || instr.op == "sw") {
-            char reg;
-            ss >> reg >> instr.rt >> instr.imm >> reg >> instr.rs;
-        } else if (instr.op == "add" || instr.op == "sub") {
-            char reg;
-            ss >> reg >> instr.rd >> reg >> instr.rs >> reg >> instr.rt;
-        } else if (instr.op == "beq") {
-            char reg;
-            ss >> reg >> instr.rs >> reg >> instr.rt >> instr.imm;
+// Forwarding check function
+bool checkForwarding(const Instruction& currentInstr, const PipelineStage& memStage, const PipelineStage& wbStage) {
+    if (forwardingEnabled) {
+        if (memStage.active && (currentInstr.rs == memStage.instr.rd || currentInstr.rt == memStage.instr.rd)) {
+            return true;
         }
-        instructions.push_back(instr);
+        if (wbStage.active && (currentInstr.rs == wbStage.instr.rd || currentInstr.rt == wbStage.instr.rd)) {
+            return true;
+        }
     }
-    return instructions;
+    return false;
 }
 
 // Execute ALU operation
@@ -64,117 +52,126 @@ int executeALU(const string& op, int operand1, int operand2) {
     return 0; // Default case
 }
 
-// Forwarding logic
-int getRegisterValue(int regNum, const PipelineStage& stage) {
-    if (forwarding) {
-        if (regNum == MEM.instr.rd && MEM.active && (MEM.instr.op == "add" || MEM.instr.op == "sub")) {
-            return MEM.aluResult;
-        }
-        if (regNum == WB.instr.rd && WB.active && (WB.instr.op == "add" || WB.instr.op == "sub")) {
-            return WB.aluResult;
-        }
+// Read instructions from a file
+vector<Instruction> readInstructions(const string& filename) {
+    ifstream infile(filename);
+    vector<Instruction> instructions;
+    string line;
+    while (getline(infile, line)) {
+        Instruction instr;
+        // Parse the line to populate instr (based on instruction format)
+        // Example: lw $2, 8($0) => op="lw", rd=2, imm=8, rs=0
+        instructions.push_back(instr);
     }
-    return registers[regNum];
+    return instructions;
+}
+
+// Write output to a file
+void writeOutput(const string& filename, int cycleCount, const vector<int>& registers, const vector<int>& memory) {
+    ofstream outfile(filename);
+    outfile << "Simulation completed in " << cycleCount << " cycles.\n\n";
+
+    outfile << "Final Register Values:\n";
+    for (int i = 0; i < 32; i++) {
+        outfile << "$" << i << ": " << registers[i] << " ";
+        if ((i + 1) % 8 == 0) outfile << endl;
+    }
+    outfile << "\nFinal Memory Values:\n";
+    for (int i = 0; i < 32; i++) {
+        outfile << "M[" << i << "]: " << memory[i] << " ";
+        if ((i + 1) % 8 == 0) outfile << endl;
+    }
 }
 
 // Simulate the pipeline for one cycle
-void simulateCycle(vector<Instruction>& instructions, vector<string>& output, int& cycleCount) {
+void simulateCycle(vector<Instruction>& instructions, int& cycleCount) {
     cycleCount++;
-    stringstream cycleOutput;
-    cycleOutput << "Cycle: " << cycleCount << endl;
 
     // WB Stage
     if (WB.active) {
+        // Write back results to registers
         if (WB.instr.op == "add" || WB.instr.op == "sub" || WB.instr.op == "lw") {
-            registers[WB.instr.rd] = WB.instr.op == "lw" ? WB.memData : WB.aluResult;
+            registers[WB.instr.rd] = WB.aluResult;
         }
         WB.active = false;
     }
-    cycleOutput << "WB: " << (WB.active ? WB.instr.op : "NOP") << endl;
 
     // MEM Stage
     if (MEM.active) {
         if (MEM.instr.op == "lw") {
-            MEM.memData = memory[MEM.aluResult / 4]; // Load word
+            MEM.aluResult = memory[MEM.aluResult / 4]; // Load word
         } else if (MEM.instr.op == "sw") {
             memory[MEM.aluResult / 4] = registers[MEM.instr.rt]; // Store word
         }
         WB = MEM;
         MEM.active = false;
     }
-    cycleOutput << "MEM: " << (MEM.active ? MEM.instr.op : "NOP") << endl;
 
     // EX Stage
     if (EX.active) {
-        int operand1 = getRegisterValue(EX.instr.rs, MEM);
-        int operand2 = (EX.instr.op == "lw" || EX.instr.op == "sw") ? EX.instr.imm : getRegisterValue(EX.instr.rt, MEM);
+        int operand1 = registers[EX.instr.rs];
+        int operand2 = (EX.instr.op == "lw" || EX.instr.op == "sw") ? EX.instr.imm : registers[EX.instr.rt];
+
+        if (checkForwarding(EX.instr, MEM, WB)) {
+            // Forwarding logic: get updated values from MEM or WB stage
+            if (MEM.active && EX.instr.rs == MEM.instr.rd) operand1 = MEM.aluResult;
+            if (WB.active && EX.instr.rs == WB.instr.rd) operand1 = WB.aluResult;
+
+            if (MEM.active && EX.instr.rt == MEM.instr.rd) operand2 = MEM.aluResult;
+            if (WB.active && EX.instr.rt == WB.instr.rd) operand2 = WB.aluResult;
+        }
+
         EX.aluResult = executeALU(EX.instr.op, operand1, operand2);
         MEM = EX;
         EX.active = false;
     }
-    cycleOutput << "EX: " << (EX.active ? EX.instr.op : "NOP") << endl;
 
     // ID Stage
     if (ID.active) {
-        if (stall) {
-            cycleOutput << "ID: Stall" << endl;
+        if (stallRequired) {
+            stallRequired = false; // Stall for one cycle
         } else {
             EX = ID;
             ID.active = false;
         }
     }
-    cycleOutput << "ID: " << (ID.active ? ID.instr.op : "NOP") << endl;
 
     // IF Stage
-    if (!instructions.empty() && !stall) {
+    if (!instructions.empty() && !stallRequired) {
         IF.instr = instructions.front();
         instructions.erase(instructions.begin());
         ID = IF;
         IF.active = false;
     }
-    cycleOutput << "IF: " << (IF.active ? IF.instr.op : "NOP") << endl;
-
-    cycleOutput << "-----------------------------------\n";
-    output.push_back(cycleOutput.str());
 }
 
-// Write output to file
-void writeOutputToFile(const string& filename, const vector<string>& output) {
-    ofstream outfile(filename);
-    for (const auto& line : output) {
-        outfile << line;
-    }
+// Output results for debugging
+void outputPipelineState(int cycle) {
+    cout << "Cycle: " << cycle << endl;
+    cout << "IF: " << (IF.active ? IF.instr.op : "NOP") << endl;
+    cout << "ID: " << (ID.active ? ID.instr.op : "NOP") << endl;
+    cout << "EX: " << (EX.active ? EX.instr.op : "NOP") << endl;
+    cout << "MEM: " << (MEM.active ? MEM.instr.op : "NOP") << endl;
+    cout << "WB: " << (WB.active ? WB.instr.op : "NOP") << endl;
+    cout << "-----------------------------------\n";
 }
 
 int main() {
-    string inputFile = "../input/test3.txt"; // Input file
-    string outputFile = "../output/output3.txt"; // Output file
+    string inputFile = "../input/test3.txt";
+    string outputFile = "../output/result.txt";
 
     vector<Instruction> instructions = readInstructions(inputFile);
-    vector<string> output;
 
     int cycleCount = 0;
+
     while (!instructions.empty() || WB.active || MEM.active || EX.active || ID.active || IF.active) {
-        simulateCycle(instructions, output, cycleCount);
+        simulateCycle(instructions, cycleCount);
+        outputPipelineState(cycleCount);
     }
 
-    // Append final states to output
-    stringstream finalOutput;
-    finalOutput << "Simulation completed in " << cycleCount << " cycles.\n";
-    finalOutput << "Final Register Values:\n";
-    for (int i = 0; i < 32; i++) {
-        finalOutput << "$" << i << ": " << registers[i] << " ";
-        if ((i + 1) % 8 == 0) finalOutput << "\n";
-    }
-    finalOutput << "Final Memory Values:\n";
-    for (int i = 0; i < 32; i++) {
-        finalOutput << "M[" << i << "]: " << memory[i] << " ";
-        if ((i + 1) % 8 == 0) finalOutput << "\n";
-    }
-    output.push_back(finalOutput.str());
+    writeOutput(outputFile, cycleCount, registers, memory);
 
-    writeOutputToFile(outputFile, output);
+    cout << "Simulation completed. Results written to " << outputFile << endl;
 
-    cout << "Simulation complete. Output written to " << outputFile << endl;
     return 0;
 }
