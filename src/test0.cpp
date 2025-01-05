@@ -6,7 +6,6 @@
 #include <sstream>
 using namespace std;
 
-// Constants
 const int NUM_REGISTERS = 32;
 const int MEMORY_SIZE = 32;
 
@@ -33,7 +32,7 @@ struct CPU {
     vector<string> clockOutput;
     CPU() {
         registers.resize(NUM_REGISTERS, 1);
-        registers[0] = 0;  // $0 is always 0
+        registers[0] = 0;
         memory.resize(MEMORY_SIZE, 1);
         pc = 0;
         cycle = 0;
@@ -54,7 +53,6 @@ struct CPU {
     void printFinalResults(ofstream& output);
 };
 
-// Helper function to print control signals
 string controlSignals(const string& op) {
     if (op == "lw")  return "RegDst=0 ALUSrc=1 Branch=0 MemRead=1 MemWrite=0 RegWrite=1 MemToReg=1";
     if (op == "sw")  return "RegDst=X ALUSrc=1 Branch=0 MemRead=0 MemWrite=1 RegWrite=0 MemToReg=X";
@@ -65,7 +63,6 @@ string controlSignals(const string& op) {
     return "RegDst=X ALUSrc=X Branch=X MemRead=X MemWrite=X RegWrite=X MemToReg=X";
 }
 
-// Helper function to parse a line into an Instruction
 Instruction parseInstruction(const string& line) {
     istringstream iss(line);
     string op, rd, rs, rt, offset;
@@ -79,16 +76,16 @@ Instruction parseInstruction(const string& line) {
 
     if (op == "lw" || op == "sw") {
         iss >> rd >> offset;
-        rd.pop_back(); // Remove ','
+        rd.pop_back();
         size_t start = offset.find('(');
         size_t end = offset.find(')');
-        inst.rd = stoi(rd.substr(1));  // e.g. $2 -> 2
-        inst.address = stoi(offset.substr(0, start));  // e.g. 16($4) -> 16
-        inst.rs = stoi(offset.substr(start + 2, end - start - 2)); // e.g. 16($4) -> 4
+        inst.rd = stoi(rd.substr(1));
+        inst.address = stoi(offset.substr(0, start));
+        inst.rs = stoi(offset.substr(start + 2, end - start - 2));
     } 
     else if (op == "beq") {
         iss >> rs >> rt >> offset;
-        rs.pop_back(); // Remove ','
+        rs.pop_back();
         rt.pop_back();
         inst.rs = stoi(rs.substr(1));
         inst.rt = stoi(rt.substr(1));
@@ -113,11 +110,10 @@ void CPU::fetch() {
         Instruction inst = instructions[pc];
         pipeline[0].push(inst);           // Place into IF stage (pipeline[0])
         clockOutput.push_back(inst.op + " IF");
-        pc++; // Point to the next instruction (Predict Not Taken: fetch next)
+        pc++; //(Predict Not Taken: fetch next)
     }
 }
 
-// Modified Decode Function (ID)
 // Decode Instruction (ID) + Hazard Detection
 bool CPU::decode() {
     if (pipeline[0].empty()) return false;
@@ -125,9 +121,6 @@ bool CPU::decode() {
     Instruction inst = pipeline[0].front();
     bool needsStall = false;
 
-    // ------------------------------------------------------------
-    // 一般 Forwarding / Hazard 檢查 (add, sub, lw)，先保留你的原有邏輯
-    // ------------------------------------------------------------
     // 檢查 EX 階段
     if (!pipeline[2].empty()) {
         Instruction prevEX = pipeline[2].front();
@@ -157,8 +150,6 @@ bool CPU::decode() {
 
         if (prevMEMWritesRegister && prevMEM.rd != 0) {
             if (prevMEM.rd == inst.rs || prevMEM.rd == inst.rt) {
-                // add/sub 在 MEM 階段結果已算好，可以 MEM->EX 或 MEM->ID forward
-                // lw 在 MEM 階段才真的讀到 memory，下一拍才 WB 寫入暫存器
                 std::cout << "[Forwarding from MEM] " 
                           << inst.op << " depends on " 
                           << prevMEM.op << " (rd=" << prevMEM.rd << ")\n";
@@ -166,16 +157,11 @@ bool CPU::decode() {
         }
     }
 
-    // ------------------------------------------------------------
-    // 針對 BEQ 的特殊處理
-    // 想要：sub 只要進入 MEM，就放行 beq；lw 一定要完成 WB 才放行 beq
-    // ------------------------------------------------------------
     if (inst.op == "beq") {
         // 檢查 EX 階段 (pipeline[2])
         if (!pipeline[2].empty()) {
             Instruction exInst = pipeline[2].front();
             if (exInst.rd != 0 && (exInst.rd == inst.rs || exInst.rd == inst.rt)) {
-                // 若 EX 是 sub 或 lw，都還沒算完
                 if (exInst.op == "sub" || exInst.op == "lw") {
                     needsStall = true;
                     std::cout << "[Stall for BEQ] " 
@@ -189,11 +175,9 @@ bool CPU::decode() {
         if (!pipeline[3].empty()) {
             Instruction memInst = pipeline[3].front();
             if (memInst.rd != 0 && (memInst.rd == inst.rs || memInst.rd == inst.rt)) {
-                // 如果 MEM 階段是 sub，表示它已經算完(在 EX 階段已完成 ALU計算)
                 if (memInst.op == "sub") {
-                    // 這裡「不 stall」，什麼都不做
+                    // 不 stall
                 }
-                // 如果是 lw，必須等到它進 WB(下一個 cycle) 才寫回暫存器
                 else if (memInst.op == "lw") {
                     needsStall = true;
                     std::cout << "[Stall for BEQ] lw in MEM stage (rd=" 
@@ -203,20 +187,14 @@ bool CPU::decode() {
         }
     }
 
-    // ------------------------------------------------------------
-    // 如果需要 stall，就插入 Bubble (NOP)
-    // ------------------------------------------------------------
     if (needsStall) {
         std::cout << "Cycle " << cycle << ": Data hazard detected, stalling pipeline\n";
         Instruction bubble = {"nop", -1, -1, -1, -1};
         pipeline[1].push(bubble);
         clockOutput.push_back("NOP inserted due to stall");
-        return true; // stall 發生
+        return true;
     }
 
-    // ------------------------------------------------------------
-    // 否則正常推進
-    // ------------------------------------------------------------
     pipeline[0].pop();      // IF -> remove
     pipeline[1].push(inst); // ID <- inst
     clockOutput.push_back(inst.op + " ID");
@@ -249,7 +227,6 @@ void CPU::execute() {
             cout << "[Branch taken] Flushing IF, PC set to " << pc << "\n";
         } else {
             // Branch not taken
-            // 原程式碼這裡寫了 output，但在此函式中無法取得 output，因此改用 cout
             cout << "[Branch not taken] Continue to next instruction\n";
         }
     } 
@@ -302,8 +279,6 @@ void CPU::writeBack() {
         return;
     }
 
-    // add, sub, lw 都已在 EX/MEM 階段寫入 registers（或於 MEM 階段對 memory 做操作）
-    // 這裡只是單純記錄執行到 WB 階段
     clockOutput.push_back(inst.op + " WB " + controlSignals(inst.op));
 }
 
@@ -311,7 +286,6 @@ void CPU::writeBack() {
 void CPU::advancePipeline(ofstream& output) {
     clockOutput.clear();
 
-    // 順序：先 WB，再 MEM，再 EX，再 ID，最後再 IF
     writeBack();
     memoryAccess();
     execute();
@@ -324,7 +298,7 @@ void CPU::advancePipeline(ofstream& output) {
         fetch();
     }
 
-    // 輸出此 clock cycle 的資訊
+    // 輸出此 clock cycle
     output << "Clock Cycle " << ++cycle << ":\n";
     for (const auto& out : clockOutput) {
         output << out << endl;
@@ -352,7 +326,6 @@ void CPU::printFinalResults(ofstream& output) {
 
 // Simulate CPU Execution
 void CPU::simulate(ofstream& output) {
-    // Continue until pipeline is empty and no more instructions to fetch
     while ( pc < (int)instructions.size() ||
             !pipeline[0].empty() ||
             !pipeline[1].empty() ||
