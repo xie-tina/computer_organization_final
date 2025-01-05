@@ -340,8 +340,8 @@ void CPU::simulate(ofstream& output) {
 int main() {
     CPU cpu;
 
-    ifstream input("../../input/test7.txt");
-    ofstream output("../../output/test7output.txt");
+    ifstream input("../../input/test8.txt");
+    ofstream output("../../output/test8output.txt");
 
     if (!input.is_open() || !output.is_open()) {
         cerr << "Error opening input or output file." << endl;

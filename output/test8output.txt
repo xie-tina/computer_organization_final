@@ -1,0 +1,70 @@
+Clock Cycle 1:
+lw IF
+
+Clock Cycle 2:
+lw ID
+beq IF
+
+Clock Cycle 3:
+lw EX RegDst=0 ALUSrc=1 Branch=0 MemRead=1 MemWrite=0 RegWrite=1 MemToReg=1
+NOP inserted due to stall
+
+Clock Cycle 4:
+lw MEM RegDst=0 ALUSrc=1 Branch=0 MemRead=1 MemWrite=0 RegWrite=1 MemToReg=1
+NOP EX
+NOP inserted due to stall
+
+Clock Cycle 5:
+lw WB RegDst=0 ALUSrc=1 Branch=0 MemRead=1 MemWrite=0 RegWrite=1 MemToReg=1
+NOP MEM
+NOP EX
+beq ID
+add IF
+
+Clock Cycle 6:
+NOP WB
+NOP MEM
+beq EX RegDst=X ALUSrc=0 Branch=1 MemRead=0 MemWrite=0 RegWrite=0 MemToReg=X
+sub IF
+
+Clock Cycle 7:
+NOP WB
+beq MEM RegDst=X ALUSrc=0 Branch=1 MemRead=0 MemWrite=0 RegWrite=0 MemToReg=X
+sub ID
+beq IF
+
+Clock Cycle 8:
+beq WB RegDst=X ALUSrc=0 Branch=1 MemRead=0 MemWrite=0 RegWrite=0 MemToReg=X
+sub EX RegDst=1 ALUSrc=0 Branch=0 MemRead=0 MemWrite=0 RegWrite=1 MemToReg=0
+NOP inserted due to stall
+
+Clock Cycle 9:
+sub MEM RegDst=1 ALUSrc=0 Branch=0 MemRead=0 MemWrite=0 RegWrite=1 MemToReg=0
+NOP EX
+beq ID
+sw IF
+
+Clock Cycle 10:
+sub WB RegDst=1 ALUSrc=0 Branch=0 MemRead=0 MemWrite=0 RegWrite=1 MemToReg=0
+NOP MEM
+beq EX RegDst=X ALUSrc=0 Branch=1 MemRead=0 MemWrite=0 RegWrite=0 MemToReg=X
+sw ID
+
+Clock Cycle 11:
+NOP WB
+beq MEM RegDst=X ALUSrc=0 Branch=1 MemRead=0 MemWrite=0 RegWrite=0 MemToReg=X
+sw EX RegDst=X ALUSrc=1 Branch=0 MemRead=0 MemWrite=1 RegWrite=0 MemToReg=X
+
+Clock Cycle 12:
+beq WB RegDst=X ALUSrc=0 Branch=1 MemRead=0 MemWrite=0 RegWrite=0 MemToReg=X
+sw MEM RegDst=X ALUSrc=1 Branch=0 MemRead=0 MemWrite=1 RegWrite=0 MemToReg=X
+
+Clock Cycle 13:
+sw WB RegDst=X ALUSrc=1 Branch=0 MemRead=0 MemWrite=1 RegWrite=0 MemToReg=X
+
+## Final Result:
+Total Cycles: 13
+Final Register Values:
+0 1 1 1 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 
+Final Memory Values:
+1 1 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 
