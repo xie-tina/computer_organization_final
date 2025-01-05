@@ -5,5 +5,5 @@
 依賴項：          //列出所需的任何外部庫或模組（例如：requirements.txt、pyproject.toml、Cargo.toml、 package.json 等)  
 編譯與執行步驟  
 編譯指令：C++        //提供具體的編譯或安裝指令（如使用make、gcc、python、cargo run 等）  
-執行指令：            //提供如何運行模擬器的具體指令，並說明如何提供輸入檔案  
-範例執行：              //提供一個範例指令來執行程式，並示範如何使用測試資料  
+執行指令：ifstream input("../../input/input file");            //提供如何運行模擬器的具體指令，並說明如何提供輸入檔案  
+範例執行：ifstream input("../../input/test3.txt");              //提供一個範例指令來執行程式，並示範如何使用測試資料  
