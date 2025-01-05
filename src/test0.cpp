@@ -2,7 +2,8 @@
 #include <vector>
 #include <string>
 #include <queue>
-
+#include <fstream>
+#include <sstream>
 using namespace std;
 
 // Constants
@@ -42,15 +43,15 @@ struct CPU {
         instructions = insts;
     }
 
-    void simulate();
+    void simulate(ofstream& output);
     void fetch();
     bool decode(); // Modified to return stall flag
     void execute();
     void memoryAccess();
     void writeBack();
-    void advancePipeline();
+    void advancePipeline(ofstream& output);
     void printPipeline();
-    void printFinalResults();
+    void printFinalResults(ofstream& output);
 };
 
 // Helper function to print control signals
@@ -62,16 +63,47 @@ string controlSignals(const string& op) {
     if (op == "beq") return "RegDst=X ALUSrc=0 Branch=1 MemRead=0 MemWrite=0 RegWrite=0 MemToReg=X";
     if (op == "nop") return "NOP";
     return "RegDst=X ALUSrc=X Branch=X MemRead=X MemWrite=X RegWrite=X MemToReg=X";
-    
-    /*
-    if (op == "lw")  return "01 010 11";
-    if (op == "sw")  return "X1 001 0X";
-    if (op == "add") return "10 000 10";
-    if (op == "sub") return "10 000 10";
-    if (op == "beq") return "X0 100 0X";
-    if (op == "nop") return "NOP";
-    return "XX XXX XX";
-    */
+}
+
+// Helper function to parse a line into an Instruction
+Instruction parseInstruction(const string& line) {
+    istringstream iss(line);
+    string op, rd, rs, rt, offset;
+
+    Instruction inst;
+    inst.rd = inst.rs = inst.rt = -1;
+    inst.immediate = inst.address = -1;
+
+    iss >> op;
+    inst.op = op;
+
+    if (op == "lw" || op == "sw") {
+        iss >> rd >> offset;
+        rd.pop_back(); // Remove ','
+        size_t start = offset.find('(');
+        size_t end = offset.find(')');
+        inst.rd = stoi(rd.substr(1));  // e.g. $2 -> 2
+        inst.address = stoi(offset.substr(0, start));  // e.g. 16($4) -> 16
+        inst.rs = stoi(offset.substr(start + 2, end - start - 2)); // e.g. 16($4) -> 4
+    } 
+    else if (op == "beq") {
+        iss >> rs >> rt >> offset;
+        rs.pop_back(); // Remove ','
+        rt.pop_back();
+        inst.rs = stoi(rs.substr(1));
+        inst.rt = stoi(rt.substr(1));
+        inst.immediate = stoi(offset);
+    } 
+    else if (op == "add" || op == "sub") {
+        iss >> rd >> rs >> rt;
+        rd.pop_back();
+        rs.pop_back();
+        inst.rd = stoi(rd.substr(1));
+        inst.rs = stoi(rs.substr(1));
+        inst.rt = stoi(rt.substr(1));
+    }
+
+    return inst;
 }
 
 // Fetch Instruction (IF)
@@ -88,12 +120,6 @@ void CPU::fetch() {
 // Modified Decode Function (ID)
 // Decode Instruction (ID) + Hazard Detection
 bool CPU::decode() {
-    // pipeline[0] = IF stage
-    // pipeline[1] = ID stage
-    // pipeline[2] = EX stage
-    // pipeline[3] = MEM stage
-    //（若需要，你也可能有 pipeline[4] = WB stage）
-
     if (pipeline[0].empty()) return false;
 
     Instruction inst = pipeline[0].front();
@@ -149,8 +175,7 @@ bool CPU::decode() {
         if (!pipeline[2].empty()) {
             Instruction exInst = pipeline[2].front();
             if (exInst.rd != 0 && (exInst.rd == inst.rs || exInst.rd == inst.rt)) {
-                // 若 EX 是 sub 或 lw，都還沒算完 (sub 還沒到 MEM, lw 還沒進 MEM)
-                // => beq 必須 stall
+                // 若 EX 是 sub 或 lw，都還沒算完
                 if (exInst.op == "sub" || exInst.op == "lw") {
                     needsStall = true;
                     std::cout << "[Stall for BEQ] " 
@@ -165,12 +190,10 @@ bool CPU::decode() {
             Instruction memInst = pipeline[3].front();
             if (memInst.rd != 0 && (memInst.rd == inst.rs || memInst.rd == inst.rt)) {
                 // 如果 MEM 階段是 sub，表示它已經算完(在 EX 階段已完成 ALU計算)
-                // 這時不需要 stall，beq 可以正常進 ID
                 if (memInst.op == "sub") {
                     // 這裡「不 stall」，什麼都不做
                 }
                 // 如果是 lw，必須等到它進 WB(下一個 cycle) 才寫回暫存器
-                // 所以還是要 stall
                 else if (memInst.op == "lw") {
                     needsStall = true;
                     std::cout << "[Stall for BEQ] lw in MEM stage (rd=" 
@@ -200,7 +223,6 @@ bool CPU::decode() {
     return false;
 }
 
-
 // Updated Branch Handling in Execute (EX)
 void CPU::execute() {
     if (pipeline[1].empty()) return;
@@ -219,24 +241,28 @@ void CPU::execute() {
         int rtValue = registers[inst.rt];
 
         if (rsValue == rtValue) {
+            // Branch taken
             pc = pc + inst.immediate - 1;
             while (!pipeline[0].empty()) {
                 pipeline[0].pop();
             }
             cout << "[Branch taken] Flushing IF, PC set to " << pc << "\n";
         } else {
+            // Branch not taken
+            // 原程式碼這裡寫了 output，但在此函式中無法取得 output，因此改用 cout
             cout << "[Branch not taken] Continue to next instruction\n";
         }
-    } else if (inst.op == "add") {
+    } 
+    else if (inst.op == "add") {
         registers[inst.rd] = registers[inst.rs] + registers[inst.rt];
-    } else if (inst.op == "sub") {
+    } 
+    else if (inst.op == "sub") {
         registers[inst.rd] = registers[inst.rs] - registers[inst.rt];
     }
 
     pipeline[2].push(inst);
     clockOutput.push_back(inst.op + " EX " + controlSignals(inst.op));
 }
-
 
 // Memory Access (MEM)
 void CPU::memoryAccess() {
@@ -276,16 +302,16 @@ void CPU::writeBack() {
         return;
     }
 
-    // add, sub, lw have already written back in EX/MEM stages
-    // Just log the WB stage
+    // add, sub, lw 都已在 EX/MEM 階段寫入 registers（或於 MEM 階段對 memory 做操作）
+    // 這裡只是單純記錄執行到 WB 階段
     clockOutput.push_back(inst.op + " WB " + controlSignals(inst.op));
 }
 
 // Pipeline Advancement
-void CPU::advancePipeline() {
+void CPU::advancePipeline(ofstream& output) {
     clockOutput.clear();
 
-    // Process pipeline stages
+    // 順序：先 WB，再 MEM，再 EX，再 ID，最後再 IF
     writeBack();
     memoryAccess();
     execute();
@@ -298,33 +324,34 @@ void CPU::advancePipeline() {
         fetch();
     }
 
-    cout << "Clock Cycle " << ++cycle << ":\n";
+    // 輸出此 clock cycle 的資訊
+    output << "Clock Cycle " << ++cycle << ":\n";
     for (const auto& out : clockOutput) {
-        cout << out << endl;
+        output << out << endl;
     }
-    cout << endl;
+    output << endl;
 }
 
 // Print Final Results
-void CPU::printFinalResults() {
-    cout << "## Final Result:\n";
-    cout << "Total Cycles: " << cycle << endl;
+void CPU::printFinalResults(ofstream& output) {
+    output << "## Final Result:\n";
+    output << "Total Cycles: " << cycle << endl;
 
-    cout << "Final Register Values:\n";
+    output << "Final Register Values:\n";
     for (int i = 0; i < NUM_REGISTERS; i++) {
-        cout << registers[i] << " ";
+        output << registers[i] << " ";
     }
-    cout << endl;
+    output << endl;
 
-    cout << "Final Memory Values:\n";
+    output << "Final Memory Values:\n";
     for (int i = 0; i < MEMORY_SIZE; i++) {
-        cout << memory[i] << " ";
+        output << memory[i] << " ";
     }
-    cout << endl;
+    output << endl;
 }
 
 // Simulate CPU Execution
-void CPU::simulate() {
+void CPU::simulate(ofstream& output) {
     // Continue until pipeline is empty and no more instructions to fetch
     while ( pc < (int)instructions.size() ||
             !pipeline[0].empty() ||
@@ -332,170 +359,33 @@ void CPU::simulate() {
             !pipeline[2].empty() ||
             !pipeline[3].empty() )
     {
-        advancePipeline();
+        advancePipeline(output);
     }
-    printFinalResults();
+    printFinalResults(output);
 }
 
 int main() {
     CPU cpu;
 
-    // Instruction example (modifiable as needed)
-    vector<Instruction> instructions = {
-        {"sub", 1, 4, 4, -1},
-        {"beq", -1, 1, 2, 2},
-        {"add", 2, 3, 3, -1},
-        {"lw", 1, 0, -1, 4},
-        {"add", 4, 5, 6, -1},
-        
-        /*
-// 1
-        {"lw", 2, 0, -1, 8},
-        {"lw", 3, 0, -1, 16},
-        {"add", 6, 4, 5, -1},
-        {"sw", 6, 0, -1, 24},
-        
-        lw$2, 8($0)
-        lw$3, 16($0)
-        add $6, $4, $5
-        sw$6, 24($0)
-        
+    ifstream input("../../input/test5.txt");
+    ofstream output("../../output/test5output.txt");
 
-// 2
-        {"lw", 2, 0, -1, 8},
-        {"lw", 3, 0, -1, 16},
-        {"add", 4, 2, 3, -1},
-        {"sw", 4, 0, -1, 24},
-        
-        lw$2, 8($0)
-        lw$3, 16($0)
-        add $4, $2, $3
-        sw$4, 24($0)
-        
+    if (!input.is_open() || !output.is_open()) {
+        cerr << "Error opening input or output file." << endl;
+        return 1;
+    }
 
-// 3
-        {"lw", 2, 0, -1, 8},
-        {"lw", 3, 0, -1, 16},
-        {"beq", -1, 2, 3, 1},
-        {"add", 4, 2, 3, -1},
-        {"sw", 4, 0, -1, 24},
-        
-        lw$2, 8($0)
-        lw$3, 16($0)
-        beq$2, $3, 1
-        add $4, $2, $3
-        sw$4, 24($0)
-        
-Cycle 1
-lw: IF
-Cycle 2
-lw: ID
-lw: IF
-Cycle 3
-lw: EX 01 010 11
-lw: ID
-beq: IF
-Cycle 4
-lw: MEM 010 11
-lw: EX 01 010 11
-beq: ID
-add: IF
-Cycle 5
-lw: WB 11
-lw: MEM 010 11
-beq: ID
-add: IF
-Cycle 6
-lw: WB 11
-beq: ID
-add: IF
-Cycle 7
-beq: EX X0 100 0X
-sw: IF
-Cycle 8
-beq: MEM 100 0X
-sw: ID
-Cycle 9
-beq: WB 0X
-sw: EX X1 001 0X
-Cycle 10
-sw: MEM 001 0X
-Cycle 11
-sw: WB 0X
-
-// 4
-        {"add", 1, 2, 3, -1},
-        {"add", 4, 1, 1, -1},
-        {"sub", 4, 4, 1, -1},
-        {"beq", -1, 4, 1, -2},
-        {"add", 4, 1, 4, -1},
-        {"sw", 4, 0, -1, 4},
-        
-        add $1, $2, $3
-        add $4, $1, $1
-        sub $4, $4, $1
-        beq$4, $1, -2
-        add $4, $1, $4
-        sw$4, 4($0)
-        
-
-// 5
-        {"sub", 1, 4, 4, -1},
-        {"beq", -1, 1, 2, 2},
-        {"add", 2, 3, 3, -1},
-        {"lw", 1, 0, -1, 4},
-        {"add", 4, 5, 6, -1},
-        
-        sub $1, $4, $4
-        beq$1, $2, 2
-        add $2, $3, $3
-        lw$1, 4($0)
-        add $4, $5, $6
-        
-
-// 6
-        {"lw", 8, 0, -1, 8},
-        {"beq", -1, 4, 8, 1},
-        {"sub", 2, 7, 9, -1},
-        {"sw", 2, 0, -1, 8},
-        
-        lw$8, 8($0)
-        beq$4, $8, 1
-        sub $2, $7, $9
-        sw$2, 8($0)
-        
-
-// 7
-        {"add", 1, 1, 2, -1},
-        {"add", 1, 1, 3, -1},
-        {"add", 1, 1, 4, -1},
-        {"sw", 1, 0, -1, 8},
-        
-        add $1, $1, $2
-        add $1, $1, $3
-        add $1, $1, $4
-        sw$1, 8($0)
-        
-
-// 8
-        {"lw", 4, 0, -1, 8},
-        {"beq", -1, 4, 4, 1},
-        {"add", 4, 4, 4, -1},
-        {"sub", 4, 4, 4, -1},
-        {"beq", -1, 4, 1, -1},
-        {"sw", 4, 0, -1, 8},
-        
-        lw$4, 8($0)
-        beq$4, $4, 1
-        add $4, $4, $4
-        sub $4, $4, $4
-        beq$4, $1, -1
-        sw$4, 8($0)
-        */
-    };
+    vector<Instruction> instructions;
+    string line;
+    while (getline(input, line)) {
+        instructions.push_back(parseInstruction(line));
+    }
 
     cpu.loadInstructions(instructions);
-    cpu.simulate();
+    cpu.simulate(output);
+
+    input.close();
+    output.close();
 
     return 0;
 }
