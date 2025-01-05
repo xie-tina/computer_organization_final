@@ -63,6 +63,16 @@ string controlSignals(const string& op) {
     if (op == "beq") return "RegDst=X ALUSrc=0 Branch=1 MemRead=0 MemWrite=0 RegWrite=0 MemToReg=X";
     if (op == "nop") return "NOP";
     return "RegDst=X ALUSrc=X Branch=X MemRead=X MemWrite=X RegWrite=X MemToReg=X";
+    
+    /*
+    if (op == "lw")  return "01 010 11";
+    if (op == "sw")  return "X1 001 0X";
+    if (op == "add") return "10 000 10";
+    if (op == "sub") return "10 000 10";
+    if (op == "beq") return "X0 100 0X";
+    if (op == "nop") return "NOP";
+    return "XX XXX XX";
+    */
 }
 
 // Fetch Instruction (IF)
@@ -122,6 +132,18 @@ bool CPU::decode() {
         }
     }
 
+    // NEW: Check if 'beq' depends on 'lw' result from WB
+    if (inst.op == "beq") {
+        if (!pipeline[3].empty()) {
+            Instruction prevMEM = pipeline[3].front();
+
+            if ((prevMEM.op == "add" || prevMEM.op == "sub" || prevMEM.op == "lw") && (prevMEM.rd == inst.rs || prevMEM.rd == inst.rt)) {
+                needsStall = true;
+                cout << "[Stall for BEQ] Waiting for " << prevMEM.op 
+                    << " (rd=" << prevMEM.rd << ") to write back\n";
+            }
+        }
+    }
     if (needsStall) {
         cout << "Cycle " << cycle << ": Data hazard detected, stalling pipeline\n";
         // Insert a bubble (NOP) into the ID stage
@@ -287,12 +309,11 @@ int main() {
 
     // Instruction example (modifiable as needed)
     vector<Instruction> instructions = {
-        {"lw", 4, 0, -1, 8},
-        {"beq", -1, 4, 4, 1},
-        {"add", 4, 4, 4, -1},
-        {"sub", 4, 4, 4, -1},
-        {"beq", -1, 4, 1, -1},
-        {"sw", 4, 0, -1, 8},
+        {"sub", 1, 4, 4, -1},
+        {"beq", -1, 1, 2, 2},
+        {"add", 2, 3, 3, -1},
+        {"lw", 1, 0, -1, 4},
+        {"add", 4, 5, 6, -1},
         /*
 // 1
         {"lw", 2, 0, -1, 8},
@@ -331,6 +352,42 @@ int main() {
         add $4, $2, $3
         sw$4, 24($0)
         
+Cycle 1
+lw: IF
+Cycle 2
+lw: ID
+lw: IF
+Cycle 3
+lw: EX 01 010 11
+lw: ID
+beq: IF
+Cycle 4
+lw: MEM 010 11
+lw: EX 01 010 11
+beq: ID
+add: IF
+Cycle 5
+lw: WB 11
+lw: MEM 010 11
+beq: ID
+add: IF
+Cycle 6
+lw: WB 11
+beq: ID
+add: IF
+Cycle 7
+beq: EX X0 100 0X
+sw: IF
+Cycle 8
+beq: MEM 100 0X
+sw: ID
+Cycle 9
+beq: WB 0X
+sw: EX X1 001 0X
+Cycle 10
+sw: MEM 001 0X
+Cycle 11
+sw: WB 0X
 
 // 4
         {"add", 1, 2, 3, -1},
