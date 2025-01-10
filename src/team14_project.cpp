@@ -14,7 +14,7 @@ struct Instruction {
     string op;      // Operation (e.g., lw, sw, add, sub, beq, nop)
     int rd, rs, rt; // Registers
     int immediate;  // Immediate value for lw/sw/beq
-    int address;    // Memory address for lw/sw
+    int address;    // Memory offset for lw/sw
 };
 
 struct CPU {
@@ -30,6 +30,7 @@ struct CPU {
     
     // Record output for each clock cycle
     vector<string> clockOutput;
+
     CPU() {
         registers.resize(NUM_REGISTERS, 1);
         registers[0] = 0;
@@ -44,7 +45,7 @@ struct CPU {
 
     void simulate(ofstream& output);
     void fetch();
-    bool decode(); // Modified to return stall flag
+    bool decode(); 
     void execute();
     void memoryAccess();
     void writeBack();
@@ -105,12 +106,11 @@ Instruction parseInstruction(const string& line) {
 
 // Fetch Instruction (IF)
 void CPU::fetch() {
-    // Check if PC is within instruction range
     if (pc < (int)instructions.size()) {
         Instruction inst = instructions[pc];
-        pipeline[0].push(inst);           // Place into IF stage (pipeline[0])
+        pipeline[0].push(inst);           
         clockOutput.push_back(inst.op + " IF");
-        pc++; //(Predict Not Taken: fetch next)
+        pc++; 
     }
 }
 
@@ -158,7 +158,7 @@ bool CPU::decode() {
     }
 
     if (inst.op == "beq") {
-        // 檢查 EX 階段 (pipeline[2])
+        // 檢查 EX
         if (!pipeline[2].empty()) {
             Instruction exInst = pipeline[2].front();
             if (exInst.rd != 0 && (exInst.rd == inst.rs || exInst.rd == inst.rt)) {
@@ -170,15 +170,11 @@ bool CPU::decode() {
                 }
             }
         }
-
-        // 檢查 MEM 階段 (pipeline[3])
+        // 檢查 MEM
         if (!pipeline[3].empty()) {
             Instruction memInst = pipeline[3].front();
             if (memInst.rd != 0 && (memInst.rd == inst.rs || memInst.rd == inst.rt)) {
-                if (memInst.op == "sub") {
-                    // 不 stall
-                }
-                else if (memInst.op == "lw") {
+                if (memInst.op == "lw") {
                     needsStall = true;
                     std::cout << "[Stall for BEQ] lw in MEM stage (rd=" 
                               << memInst.rd << "), waiting for it to finish WB\n";
@@ -195,13 +191,13 @@ bool CPU::decode() {
         return true;
     }
 
-    pipeline[0].pop();      // IF -> remove
-    pipeline[1].push(inst); // ID <- inst
+    pipeline[0].pop();
+    pipeline[1].push(inst); 
     clockOutput.push_back(inst.op + " ID");
     return false;
 }
 
-// Updated Branch Handling in Execute (EX)
+// Execute (EX)
 void CPU::execute() {
     if (pipeline[1].empty()) return;
 
@@ -221,12 +217,12 @@ void CPU::execute() {
         if (rsValue == rtValue) {
             // Branch taken
             pc = pc + inst.immediate - 1;
-            while (!pipeline[0].empty()) {
-                pipeline[0].pop();
-            }
-            cout << "[Branch taken] Flushing IF, PC set to " << pc << "\n";
+
+            while (!pipeline[0].empty()) pipeline[0].pop();
+            while (!pipeline[1].empty()) pipeline[1].pop();
+
+            cout << "[Branch taken] Flushing IF & ID, PC set to " << pc << "\n";
         } else {
-            // Branch not taken
             cout << "[Branch not taken] Continue to next instruction\n";
         }
     } 
@@ -255,12 +251,12 @@ void CPU::memoryAccess() {
     }
 
     if (inst.op == "lw") {
-        // Load from memory address / 4
-        registers[inst.rd] = memory[inst.address / 4];
+        int memAddress = registers[inst.rs] + inst.address;
+        registers[inst.rd] = memory[memAddress / 4];
     }
     else if (inst.op == "sw") {
-        // Store to memory address / 4
-        memory[inst.address / 4] = registers[inst.rs];
+        int memAddress = registers[inst.rs] + inst.address;
+        memory[memAddress / 4] = registers[inst.rd];
     }
 
     pipeline[3].push(inst);
@@ -290,10 +286,8 @@ void CPU::advancePipeline(ofstream& output) {
     memoryAccess();
     execute();
 
-    // Decode and handle stalls
     bool stall = decode();
 
-    // Fetch only if no stall
     if (!stall) {
         fetch();
     }
@@ -351,6 +345,7 @@ int main() {
     vector<Instruction> instructions;
     string line;
     while (getline(input, line)) {
+        if (line.empty()) continue;
         instructions.push_back(parseInstruction(line));
     }
 
